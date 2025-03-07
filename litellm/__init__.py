@@ -508,6 +508,7 @@ azure_models: Set = set()
 azure_text_models: Set = set()
 anyscale_models: Set = set()
 cerebras_models: Set = set()
+nvidia_models: Set = set()
 galadriel_models: Set = set()
 sambanova_models: Set = set()
 sambanova_embedding_models: Set = set()
@@ -700,6 +701,8 @@ def add_known_models():
             anyscale_models.add(key)
         elif value.get("litellm_provider") == "cerebras":
             cerebras_models.add(key)
+        elif value.get("litellm_provider") == "nvidia":
+            nvidia_models.add(key)
         elif value.get("litellm_provider") == "galadriel":
             galadriel_models.add(key)
         elif value.get("litellm_provider") == "sambanova":
@@ -826,6 +829,7 @@ model_list = list(
     | azure_models
     | anyscale_models
     | cerebras_models
+    | nvidia_models
     | galadriel_models
     | sambanova_models
     | azure_text_models
@@ -908,6 +912,7 @@ models_by_provider: dict = {
     "azure_text": azure_text_models,
     "anyscale": anyscale_models,
     "cerebras": cerebras_models,
+    "nvidia": nvidia_models,
     "galadriel": galadriel_models,
     "sambanova": sambanova_models | sambanova_embedding_models,
     "novita": novita_models,

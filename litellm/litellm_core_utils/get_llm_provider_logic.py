@@ -126,6 +126,25 @@ def get_llm_provider(  # noqa: PLR0915
             if _is_non_openai_azure_model(model):
                 custom_llm_provider = "openai"
                 return model, custom_llm_provider, dynamic_api_key, api_base
+        elif model.split("/", 1)[0] in ("nvidia_nim", "nvidia") or model in litellm.nvidia_models:
+            api_base = (
+                api_base 
+                or get_secret("NVIDIA_API_BASE") 
+                or get_secret("NVIDIA_BASE_URL") 
+                or get_secret("NVIDIA_NIM_API_BASE") 
+                or "https://integrate.api.nvidia.com/v1"
+            ) # type: ignore
+            dynamic_api_key = api_key or get_secret_str("NVIDIA_API_KEY") or get_secret_str("NVIDIA_NIM_API_KEY")
+            custom_llm_provider = "nvidia"
+            if model.split("/", 1)[0] in ("nvidia_nim", "nvidia"):
+                model = model.split("/", 1)[1]
+            
+            # if model not in litellm.nvidia_models:
+            #     raise Warning(
+            #         f"Inference may fail, Model not found. You passed model={model}, custom_llm_provider={custom_llm_provider}.",
+            #         "Check available models using `NvidiaNimConfig().available_models()` "
+            #     )
+            return model, custom_llm_provider, dynamic_api_key, api_base
 
         ### Handle cases when custom_llm_provider is set to cohere/command-r-plus but it should use cohere_chat route
         model, custom_llm_provider = handle_cohere_chat_model_custom_llm_provider(
@@ -191,8 +210,8 @@ def get_llm_provider(  # noqa: PLR0915
                         custom_llm_provider = "groq"
                         dynamic_api_key = get_secret_str("GROQ_API_KEY")
                     elif endpoint == "https://integrate.api.nvidia.com/v1":
-                        custom_llm_provider = "nvidia_nim"
-                        dynamic_api_key = get_secret_str("NVIDIA_NIM_API_KEY")
+                        custom_llm_provider = "nvidia"
+                        dynamic_api_key = get_secret_str("NVIDIA_API_KEY") or get_secret_str("NVIDIA_NIM_API_KEY")
                     elif endpoint == "https://api.cerebras.ai/v1":
                         custom_llm_provider = "cerebras"
                         dynamic_api_key = get_secret_str("CEREBRAS_API_KEY")

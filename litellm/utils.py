@@ -7,7 +7,6 @@
 #
 #  Thank you users! We ❤️ you! - Krrish & Ishaan
 
-from io import StringIO
 import ast
 import asyncio
 import base64
@@ -41,6 +40,7 @@ from os.path import abspath, dirname, join
 
 import aiohttp
 import dotenv
+import fastuuid as uuid
 import httpx
 import openai
 import tiktoken
@@ -59,7 +59,12 @@ import litellm.litellm_core_utils.audio_utils.utils
 import litellm.litellm_core_utils.json_validation_rule
 import litellm.llms
 import litellm.llms.gemini
-from litellm._uuid import uuid
+# Import cached imports utilities
+from litellm.litellm_core_utils.cached_imports import (
+    get_coroutine_checker,
+    get_litellm_logging_class,
+    get_set_callbacks,
+)
 from litellm.caching._internal_lru_cache import lru_cache_wrapper
 from litellm.caching.caching import DualCache
 from litellm.caching.caching_handler import CachingHandlerResponse, LLMCachingHandler
@@ -81,13 +86,6 @@ from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.integrations.vector_store_integrations.base_vector_store import (
     BaseVectorStore,
-)
-
-# Import cached imports utilities
-from litellm.litellm_core_utils.cached_imports import (
-    get_coroutine_checker,
-    get_litellm_logging_class,
-    get_set_callbacks,
 )
 from litellm.litellm_core_utils.core_helpers import (
     map_finish_reason,
@@ -229,6 +227,7 @@ from typing import (
     cast,
     get_args,
 )
+
 
 from openai import OpenAIError as OriginalError
 
@@ -725,21 +724,17 @@ def function_setup(  # noqa: PLR0915
                 messages = kwargs["messages"]
             ### PRE-CALL RULES ###
             if (
-                Rules.has_pre_call_rules()
-                and isinstance(messages, list)
+                isinstance(messages, list)
                 and len(messages) > 0
                 and isinstance(messages[0], dict)
                 and "content" in messages[0]
             ):
-
-                buffer = StringIO()
-                for m in messages:
-                    content = m.get("content", "")
-                    if content is not None and isinstance(content, str):
-                        buffer.write(content)
-
                 rules_obj.pre_call_rules(
-                    input=buffer.getvalue(),
+                    input="".join(
+                        m.get("content", "")
+                        for m in messages
+                        if "content" in m and isinstance(m["content"], str)
+                    ),
                     model=model,
                 )
         elif (
@@ -1058,6 +1053,7 @@ def client(original_function):  # noqa: PLR0915
                                     )
 
         except Exception as e:
+            print("error", e)
             raise e
 
     @wraps(original_function)
@@ -2387,9 +2383,9 @@ def register_model(model_cost: Union[str, dict]):  # noqa: PLR0915
         elif value.get("litellm_provider") == "bedrock":
             if key not in litellm.bedrock_models:
                 litellm.bedrock_models.add(key)
-        elif value.get("litellm_provider") == "novita":
-            if key not in litellm.novita_models:
-                litellm.novita_models.add(key)
+        elif value.get("litellm_provider") in ("nvidia_nim", "nvidia"):
+            if key not in litellm.nvidia_models:
+                litellm.nvidia_models.add(key)
     return model_cost
 
 
@@ -2780,15 +2776,16 @@ def get_optional_params_embeddings(  # noqa: PLR0915
         optional_params = litellm.DatabricksEmbeddingConfig().map_openai_params(
             non_default_params=non_default_params, optional_params={}
         )
-
-    elif custom_llm_provider == "nvidia_nim":
+        final_params = {**optional_params, **kwargs}
+        return final_params
+    elif custom_llm_provider in ("nvidia_nim", "nvidia"):
         supported_params = get_supported_openai_params(
             model=model or "",
-            custom_llm_provider="nvidia_nim",
+            custom_llm_provider=custom_llm_provider,
             request_type="embeddings",
         )
         _check_valid_arg(supported_params=supported_params)
-        optional_params = litellm.nvidiaNimEmbeddingConfig.map_openai_params(
+        optional_params = litellm.nvidiaEmbeddingConfig.map_openai_params(
             non_default_params=non_default_params, optional_params={}, kwargs=kwargs
         )
     elif custom_llm_provider == "vertex_ai" or custom_llm_provider == "gemini":
@@ -3264,7 +3261,7 @@ def pre_process_optional_params(
             and custom_llm_provider != "anyscale"
             and custom_llm_provider != "together_ai"
             and custom_llm_provider != "groq"
-            and custom_llm_provider != "nvidia_nim"
+            and custom_llm_provider != "nvidia"
             and custom_llm_provider != "cerebras"
             and custom_llm_provider != "xai"
             and custom_llm_provider != "ai21_chat"
@@ -3280,7 +3277,6 @@ def pre_process_optional_params(
             and custom_llm_provider != "openrouter"
             and custom_llm_provider != "vercel_ai_gateway"
             and custom_llm_provider != "nebius"
-            and custom_llm_provider != "wandb"
             and custom_llm_provider not in litellm.openai_compatible_providers
         ):
             if custom_llm_provider == "ollama":
@@ -3839,8 +3835,12 @@ def get_optional_params(  # noqa: PLR0915
                 else False
             ),
         )
-    elif custom_llm_provider == "nvidia_nim":
-        optional_params = litellm.NvidiaNimConfig().map_openai_params(
+    elif custom_llm_provider in ("nvidia_nim", "nvidia"):
+        supported_params = get_supported_openai_params(
+            model=model, custom_llm_provider=custom_llm_provider
+        )
+        _check_valid_arg(supported_params=supported_params)
+        optional_params = litellm.NvidiaConfig().map_openai_params(
             model=model,
             non_default_params=non_default_params,
             optional_params=optional_params,
@@ -4452,9 +4452,9 @@ def get_api_key(llm_provider: str, dynamic_api_key: Optional[str]):
     # nebius
     elif llm_provider == "nebius":
         api_key = api_key or litellm.nebius_key or get_secret("NEBIUS_API_KEY")
-    # wandb
-    elif llm_provider == "wandb":
-        api_key = api_key or litellm.wandb_key or get_secret("WANDB_API_KEY")
+    # nvidia
+    elif llm_provider in ["nvidia_nim", "nvidia"]:
+        api_key = api_key or get_secret("NVIDIA_API_KEY") or get_secret("NVIDIA_NIM_API_KEY")
     return api_key
 
 
@@ -4883,16 +4883,12 @@ def _get_model_info_helper(  # noqa: PLR0915
                 max_input_tokens=_model_info.get("max_input_tokens", None),
                 max_output_tokens=_model_info.get("max_output_tokens", None),
                 input_cost_per_token=_input_cost_per_token,
-                input_cost_per_token_flex=_model_info.get("input_cost_per_token_flex", None),
-                input_cost_per_token_priority=_model_info.get("input_cost_per_token_priority", None),
                 cache_creation_input_token_cost=_model_info.get(
                     "cache_creation_input_token_cost", None
                 ),
                 cache_read_input_token_cost=_model_info.get(
                     "cache_read_input_token_cost", None
                 ),
-                cache_read_input_token_cost_flex=_model_info.get("cache_read_input_token_cost_flex", None),
-                cache_read_input_token_cost_priority=_model_info.get("cache_read_input_token_cost_priority", None),
                 cache_creation_input_token_cost_above_1hr=_model_info.get(
                     "cache_creation_input_token_cost_above_1hr", None
                 ),
@@ -4917,8 +4913,6 @@ def _get_model_info_helper(  # noqa: PLR0915
                     "output_cost_per_token_batches"
                 ),
                 output_cost_per_token=_output_cost_per_token,
-                output_cost_per_token_flex=_model_info.get("output_cost_per_token_flex", None),
-                output_cost_per_token_priority=_model_info.get("output_cost_per_token_priority", None),
                 output_cost_per_audio_token=_model_info.get(
                     "output_cost_per_audio_token", None
                 ),
@@ -5448,11 +5442,11 @@ def validate_environment(  # noqa: PLR0915
                 keys_in_environment = True
             else:
                 missing_keys.append("GROQ_API_KEY")
-        elif custom_llm_provider == "nvidia_nim":
-            if "NVIDIA_NIM_API_KEY" in os.environ:
+        elif custom_llm_provider in ["nvidia_nim", "nvidia"]:
+            if "NVIDIA_API_KEY" in os.environ or "NVIDIA_NIM_API_KEY" in os.environ:
                 keys_in_environment = True
             else:
-                missing_keys.append("NVIDIA_NIM_API_KEY")
+                missing_keys.append("NVIDIA_API_KEY")
         elif custom_llm_provider == "cerebras":
             if "CEREBRAS_API_KEY" in os.environ:
                 keys_in_environment = True
@@ -5545,11 +5539,6 @@ def validate_environment(  # noqa: PLR0915
                 keys_in_environment = True
             else:
                 missing_keys.append("NEBIUS_API_KEY")
-        elif custom_llm_provider == "wandb":
-            if "WANDB_API_KEY" in os.environ:
-                keys_in_environment = True
-            else:
-                missing_keys.append("WANDB_API_KEY")
         elif custom_llm_provider == "dashscope":
             if "DASHSCOPE_API_KEY" in os.environ:
                 keys_in_environment = True
@@ -5664,11 +5653,6 @@ def validate_environment(  # noqa: PLR0915
                 keys_in_environment = True
             else:
                 missing_keys.append("NEBIUS_API_KEY")
-        elif model in litellm.wandb_models:
-            if "WANDB_API_KEY" in os.environ:
-                keys_in_environment = True
-            else:
-                missing_keys.append("WANDB_API_KEY")
 
     def filter_missing_keys(keys: List[str], exclude_pattern: str) -> List[str]:
         """Filter out keys that contain the exclude_pattern (case insensitive)."""
@@ -6433,8 +6417,6 @@ def get_valid_models(
     check_provider_endpoint: Optional[bool] = None,
     custom_llm_provider: Optional[str] = None,
     litellm_params: Optional[LiteLLM_Params] = None,
-    api_key: Optional[str] = None,
-    api_base: Optional[str] = None,
 ) -> List[str]:
     """
     Returns a list of valid LLMs based on the set environment variables
@@ -6442,24 +6424,11 @@ def get_valid_models(
     Args:
         check_provider_endpoint: If True, will check the provider's endpoint for valid models.
         custom_llm_provider: If provided, will only check the provider's endpoint for valid models.
-        api_key: If provided, will use the API key to get valid models.
-        api_base: If provided, will use the API base to get valid models.
     Returns:
         A list of valid LLMs
     """
 
     try:
-        ################################
-        # init litellm_params 
-        #################################
-        if litellm_params is None:
-            litellm_params = LiteLLM_Params(model="")
-        if api_key is not None:
-            litellm_params.api_key = api_key
-        if api_base is not None:
-            litellm_params.api_base = api_base
-        #################################
-        
         check_provider_endpoint = (
             check_provider_endpoint or litellm.check_provider_endpoint
         )
@@ -7053,7 +7022,7 @@ class ProviderConfigManager:
         ):
             return litellm.MistralConfig()
         elif litellm.LlmProviders.NVIDIA_NIM == provider:
-            return litellm.NvidiaNimConfig()
+            return litellm.NvidiaConfig()
         elif litellm.LlmProviders.CEREBRAS == provider:
             return litellm.CerebrasConfig()
         elif litellm.LlmProviders.BASETEN == provider:
@@ -7086,8 +7055,6 @@ class ProviderConfigManager:
             return litellm.NovitaConfig()
         elif litellm.LlmProviders.NEBIUS == provider:
             return litellm.NebiusConfig()
-        elif litellm.LlmProviders.WANDB == provider:
-            return litellm.WandbConfig()
         elif litellm.LlmProviders.DASHSCOPE == provider:
             return litellm.DashScopeChatConfig()
         elif litellm.LlmProviders.MOONSHOT == provider:
@@ -7543,12 +7510,6 @@ class ProviderConfigManager:
             )
 
             return RecraftImageEditConfig()
-        elif LlmProviders.AZURE_AI == provider:
-            from litellm.llms.azure_ai.image_edit import (
-                get_azure_ai_image_edit_config,
-            )
-
-            return get_azure_ai_image_edit_config(model)
         elif LlmProviders.LITELLM_PROXY == provider:
             from litellm.llms.litellm_proxy.image_edit.transformation import (
                 LiteLLMProxyImageEditConfig,
