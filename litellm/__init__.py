@@ -701,7 +701,7 @@ def add_known_models():
             anyscale_models.add(key)
         elif value.get("litellm_provider") == "cerebras":
             cerebras_models.add(key)
-        elif value.get("litellm_provider") == "nvidia":
+        elif value.get("litellm_provider") in ("nvidia", "nvidia_nim"):
             nvidia_models.add(key)
         elif value.get("litellm_provider") == "galadriel":
             galadriel_models.add(key)
@@ -913,6 +913,7 @@ models_by_provider: dict = {
     "anyscale": anyscale_models,
     "cerebras": cerebras_models,
     "nvidia": nvidia_models,
+    "nvidia_nim": nvidia_models,
     "galadriel": galadriel_models,
     "sambanova": sambanova_models | sambanova_embedding_models,
     "novita": novita_models,
@@ -1102,12 +1103,6 @@ from .llms.gemini.chat.transformation import (
     GoogleAIStudioGeminiConfig as GeminiConfig,  # aliased to maintain backwards compatibility
 )
 
-
-from .llms.vertex_ai.vertex_embeddings.transformation import (
-    VertexAITextEmbeddingConfig,
-)
-
-vertexAITextEmbeddingConfig = VertexAITextEmbeddingConfig()
 
 from .llms.vertex_ai.vertex_ai_partner_models.anthropic.transformation import (
     VertexAIAnthropicConfig,
