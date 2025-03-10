@@ -912,7 +912,6 @@ models_by_provider: dict = {
     "azure_text": azure_text_models,
     "anyscale": anyscale_models,
     "cerebras": cerebras_models,
-    "nvidia": nvidia_models,
     "nvidia_nim": nvidia_models,
     "galadriel": galadriel_models,
     "sambanova": sambanova_models | sambanova_embedding_models,

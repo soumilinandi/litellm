@@ -273,7 +273,6 @@ LITELLM_CHAT_PROVIDERS = [
     "mistral",
     "groq",
     "nvidia_nim",
-    "nvidia",
     "cerebras",
     "baseten",
     "ai21_chat",
