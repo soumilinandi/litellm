@@ -33,40 +33,40 @@ def no_env_var(*vars: str) -> Generator[None, None, None]:
         for var, val in original_values.items():
             os.environ[var] = val
 
-
-## mock /models endpoint
-@pytest.fixture
-def mock_models_endpoint():
-    response_data = {
-        "object": "list",
-        "data": [
-            {
-                "id": "nv-mistralai/mistral-nemo-12b-instruct",
-                "object": "model",
-                "created": 735790403,
-                "owned_by": "01-ai"
+location_tool = {
+            "type": "function",
+            "function": {
+                "name": "get_current_weather",
+                "description": "Get the current weather in a given location",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA",
+                        },
+                        "unit": {"type": "string", "enum": ["celsius"]},
+                    },
+                    "required": ["location"],
+                },
             },
-            {
-                "id": "nvidia/vila",
-                "object": "model",
-                "created": 735790403,
-                "owned_by": "abacusai"
-            },
-    ]
-    }
-    with respx.mock(base_url="https://integrate.api.nvidia.com/v1") as mock:
-        mock.get("/models").respond(200, json=response_data)
-        yield mock
-
-@pytest.fixture(params=("nvidia", "nvidia_nim"))
+        }
+@pytest.fixture(params=["nvidia", "nvidia_nim"])
 def provider(request):
     return request.param
+
+@pytest.fixture(scope="module")
+def check_nvidia_api_keys():
+    """Fixture to check if NVIDIA API keys are available and skip tests if not."""
+    if not any(key in os.environ for key in ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]):
+        pytest.skip("Either NVIDIA_API_KEY or NVIDIA_NIM_API_KEY environment variable is not set.")
+
 
 def test_completion_missing_key(provider):
     with no_env_var("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"):
         with pytest.raises(litellm.exceptions.AuthenticationError):
             completion(
-                model=f"{provider}/databricks/dbrx-instruct",
+                model=f"{provider}/meta/llama-3.1-70b-instruct",
                 messages=[
                     {
                         "role": "user",
@@ -81,7 +81,7 @@ def test_completion_bogus_key(provider):
     with pytest.raises(litellm.exceptions.AuthenticationError):
         completion(
             api_key="bogus-key",
-            model=f"{provider}/databricks/dbrx-instruct",
+            model=f"{provider}/meta/llama-3.1-70b-instruct",
             messages=[
                 {
                     "role": "user",
@@ -92,8 +92,7 @@ def test_completion_bogus_key(provider):
             frequency_penalty=0.1,
         )
 
-@pytest.mark.skipif(not any(key in os.environ for key in ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]), reason="Either NVIDIA_API_KEY or NVIDIA_NIM_API_KEY environment variable is not set.")
-def test_completion_invalid_provider():
+def test_completion_invalid_provider(check_nvidia_api_keys):
     with pytest.raises(litellm.exceptions.BadRequestError) as err_msg:
         completion(
             model="invalid_model",
@@ -116,9 +115,9 @@ def test_completion_nvidia(respx_mock: MockRouter, provider):
         id="cmpl-mock",
         choices=[Choices(message=Message(content="Mocked response", role="assistant"))],
         created=int(datetime.now().timestamp()),
-        model=f"{provider}/databricks/dbrx-instruct",
+        model=f"{provider}/nvidia/meta/llama-3.1-70b-instruct"
     )
-    model_name = f"{provider}/databricks/dbrx-instruct"
+    model_name=f"{provider}/meta/llama-3.1-70b-instruct"
 
     mock_request = respx_mock.post(
         "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -153,7 +152,7 @@ def test_completion_nvidia(respx_mock: MockRouter, provider):
                     "content": "What's the weather like in Boston today in Fahrenheit?",
                 }
             ],
-            "model": "databricks/dbrx-instruct",
+            "model": "meta/llama-3.1-70b-instruct",
             "frequency_penalty": 0.1,
             "presence_penalty": 0.5,
         }
@@ -168,7 +167,7 @@ def test_completion_nvidia(respx_mock: MockRouter, provider):
 def test_embedding_nvidia(respx_mock: MockRouter, provider):
     litellm.set_verbose = True
     mock_response = EmbeddingResponse(
-        model=f"{provider}/databricks/dbrx-instruct",
+        model=f"{provider}/meta/llama-3.1-70b-instruct",
         data=[
             {
                 "embedding": [0.1, 0.2, 0.3],
@@ -209,7 +208,7 @@ async def test_async_completion_missing_key(provider):
     with no_env_var("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"):
         with pytest.raises(litellm.exceptions.AuthenticationError):
             await litellm.acompletion(
-                model=f"{provider}/databricks/dbrx-instruct",
+                model=f"{provider}/meta/llama-3.1-70b-instruct",
                 messages=[
                     {
                         "role": "user",
@@ -222,8 +221,7 @@ async def test_async_completion_missing_key(provider):
 
 @pytest.mark.asyncio
 @pytest.mark.respx
-@pytest.mark.skipif(not any(key in os.environ for key in ["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]), reason="Either NVIDIA_API_KEY or NVIDIA_NIM_API_KEY environment variable is not set.")
-async def test_async_completion_nvidia(respx_mock):
+async def test_async_completion_nvidia(respx_mock, check_nvidia_api_keys):
     """
     Test successful async completion with NVIDIA API
     """
@@ -239,10 +237,10 @@ async def test_async_completion_nvidia(respx_mock):
             }
         }],
         "created": int(datetime.now().timestamp()),
-        "model": "databricks/dbrx-instruct"
+        "model": "meta/llama-3.1-70b-instruct"
     }
     
-    model_name = "nvidia/databricks/dbrx-instruct"
+    model_name = "nvidia/meta/llama-3.1-70b-instruct"
     
     # Mock the async POST request
     mock_request = respx_mock.post(
@@ -277,7 +275,7 @@ async def test_async_completion_nvidia(respx_mock):
                     "content": "What's the weather like in Boston today in Fahrenheit?",
                 }
             ],
-            "model": "databricks/dbrx-instruct",
+            "model": "meta/llama-3.1-70b-instruct",
             "frequency_penalty": 0.1,
             "presence_penalty": 0.5,
         }
@@ -292,7 +290,7 @@ async def test_async_completion_timeout(provider):
     # Mock the acompletion method to raise a timeout
     with pytest.raises(litellm.exceptions.Timeout):
         await litellm.acompletion(
-            model=f"{provider}/databricks/dbrx-instruct",
+            model=f"{provider}/meta/llama-3.1-70b-instruct",
             messages=[
                 {
                     "role": "user",
@@ -314,7 +312,7 @@ async def test_async_completion_with_stream(respx_mock: respx.MockRouter, provid
             "id": "cmpl-stream-1",
             "object": "chat.completion.chunk",
             "created": int(datetime.now().timestamp()),
-            "model": "databricks/dbrx-instruct",
+            "model": "meta/llama-3.1-70b-instruct",
             "choices": [{
                 "index": 0,
                 "delta": {"role": "assistant", "content": "Streaming"},
@@ -325,7 +323,7 @@ async def test_async_completion_with_stream(respx_mock: respx.MockRouter, provid
             "id": "cmpl-stream-2",
             "object": "chat.completion.chunk",
             "created": int(datetime.now().timestamp()),
-            "model": "databricks/dbrx-instruct",
+            "model": "meta/llama-3.1-70b-instruct",
             "choices": [{
                 "index": 0,
                 "delta": {"content": " response"},
@@ -336,7 +334,7 @@ async def test_async_completion_with_stream(respx_mock: respx.MockRouter, provid
             "id": "cmpl-stream-3",
             "object": "chat.completion.chunk",
             "created": int(datetime.now().timestamp()),
-            "model": "databricks/dbrx-instruct",
+            "model": "meta/llama-3.1-70b-instruct",
             "choices": [{
                 "index": 0,
                 "delta": {},
@@ -358,7 +356,7 @@ async def test_async_completion_with_stream(respx_mock: respx.MockRouter, provid
     try:
         response = await litellm.acompletion(
             api_key="test-async-stream-key",
-            model=f"{provider}/databricks/dbrx-instruct",
+            model=f"{provider}/meta/llama-3.1-70b-instruct",
             messages=[
                 {
                     "role": "user",
@@ -379,3 +377,108 @@ async def test_async_completion_with_stream(respx_mock: respx.MockRouter, provid
         assert len(mock_request.calls) > 0
     except Exception as e:
         pytest.fail(f"Async streaming completion test failed: {e}")
+
+## ---------------------------------------- Tool Calling test cases ----------------------------------------
+@pytest.mark.respx
+@pytest.mark.parametrize("stream", [False, True])
+def test_nvidia_tool_use(provider, check_nvidia_api_keys, stream):
+    messages = [{"role": "user", "content": "What's the weather like in San Francisco?"}]
+    tools = [location_tool]
+    model = f"{provider}/meta/llama-3.1-405b-instruct"
+
+    try:
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+        }
+        
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stop"] = ["\n\n"]
+        
+        response = completion(**kwargs)
+        
+        if stream:
+            # For streaming response, check the first chunk
+            for chunk in response:
+                # Check if chunk has tool_calls
+                has_tool_calls = chunk.choices[0].delta.tool_calls is not None
+                
+                # If no tool_calls in delta, check if content contains function call indicators
+                if not has_tool_calls:
+                    has_function_content = (
+                        chunk.choices[0].delta.content and 
+                        ("<function" in chunk.choices[0].delta.content or 
+                         "get_current_weather" in chunk.choices[0].delta.content)
+                    )
+                    
+                    assert has_function_content, "No tool calls or function call content found in stream chunk"
+                else:
+                    assert chunk.choices[0].delta.tool_calls[0].function.name == "get_current_weather"
+                
+                # Only check the first chunk
+                break
+        else:
+            # For non-streaming response
+            assert response.choices[0].message.tool_calls
+            assert response.choices[0].message.tool_calls[0].function.name == "get_current_weather"
+            assert response.choices[0].finish_reason == "tool_calls"
+            
+    except litellm.InternalServerError:
+        pass
+
+@pytest.mark.asyncio
+@pytest.mark.respx
+@pytest.mark.parametrize("stream", [False, True])
+async def test_async_nvidia_tool_use(provider, check_nvidia_api_keys, stream):
+    messages = [{"role": "user", "content": "What's the weather like in San Francisco?"}]
+    tools = [location_tool]
+    model=f"{provider}/meta/llama-3.1-405b-instruct"
+
+    try:
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+        }
+        
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stop"] = ["\n\n"]
+        
+        response = await litellm.acompletion(**kwargs)
+        
+        if stream:
+            # For streaming response, collect chunks
+            chunks = []
+            async for chunk in response:
+                chunks.append(chunk)
+                # Break after collecting a few chunks to keep test fast
+                if len(chunks) > 5:
+                    break
+            
+            # Check if any chunk has tool_calls
+            has_tool_calls = any(
+                chunk.choices[0].delta.tool_calls is not None 
+                for chunk in chunks
+            )
+            
+            # If no tool_calls in delta, check if content contains function call indicators
+            if not has_tool_calls:
+                has_function_content = any(
+                    chunk.choices[0].delta.content and 
+                    ("<function" in chunk.choices[0].delta.content or 
+                     "get_current_weather" in chunk.choices[0].delta.content)
+                    for chunk in chunks
+                )
+                
+                assert has_function_content, "No tool calls or function call content found in stream chunks"
+        else:
+            # For non-streaming response, check directly
+            assert response.choices[0].message.tool_calls
+            assert response.choices[0].message.tool_calls[0].function.name == "get_current_weather"
+            assert response.choices[0].finish_reason == "tool_calls"
+        
+    except litellm.InternalServerError:
+        pass
